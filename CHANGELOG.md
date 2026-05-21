@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.0.4](https://github.com/home-operations/flate/compare/0.0.3...0.0.4) (2026-05-21)
+
+
+### Features
+
+* **diff:** add `diff images` for set-diffing changed container images ([adf94e0](https://github.com/home-operations/flate/commit/adf94e036c65b6b62e771d569b090011aa334b21))
+* **diff:** add `diff images` for set-diffing changed container images ([1854bf2](https://github.com/home-operations/flate/commit/1854bf2f3072ceb4874bf207abac50fcf4141988))
+
 ## [0.0.3](https://github.com/home-operations/flate/compare/0.0.2...0.0.3) (2026-05-21)
 
 
