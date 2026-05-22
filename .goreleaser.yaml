@@ -43,7 +43,6 @@ upx:
     lzma: true
 
 checksum:
-  name_template: checksums.txt
   algorithm: sha256
   split: true
 
@@ -54,11 +53,10 @@ sboms:
 
 signs:
   - cmd: cosign
-    certificate: "${artifact}.crt"
+    signature: ${artifact}.sigstore.json
     args:
       - sign-blob
-      - --output-certificate=${certificate}
-      - --output-signature=${signature}
+      - --bundle=${signature}
       - --yes
       - ${artifact}
     artifacts: all
