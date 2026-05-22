@@ -3,9 +3,11 @@
 name: Release
 
 on:
-  release:
-    types:
-      - published
+  push:
+    # Org enforces release immutability — goreleaser owns the release as a
+    # draft; the final job flips it to published.
+    tags:
+      - "*"
 
 jobs:
   build:
@@ -154,6 +156,7 @@ jobs:
         with:
           dependency-snapshot: true
           image: ghcr.io/${{ github.repository }}@${{ needs.merge.outputs.digest }}
+          upload-release-assets: false
 
       - name: Attestation
         uses: actions/attest@59d89421af93a897026c735860bf21b6eb4f7b26 # v4.1.0
@@ -207,3 +210,18 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    needs:
+      - attest
+      - goreleaser
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Mark release as published
+        run: gh release edit "$TAG" --draft=false --repo "${{ github.repository }}"

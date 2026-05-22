@@ -27,8 +27,22 @@ jobs:
           permission-pull-requests: write
 
       - name: Release Please
+        id: release
         uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
           token: ${{ steps.app-token.outputs.token }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+
+      # skip-github-release leaves tagging to "existing infrastructure", so
+      # create the tag ref via API to trigger the release workflow.
+      - name: Push tag
+        if: steps.release.outputs.release_created == 'true'
+        env:
+          TAG: ${{ steps.release.outputs.tag_name }}
+          SHA: ${{ steps.release.outputs.sha }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |-
+          gh api --method POST "/repos/${GITHUB_REPOSITORY}/git/refs" \
+            -f "ref=refs/tags/${TAG}" \
+            -f "sha=${SHA}"
