@@ -18,6 +18,12 @@ go install github.com/home-operations/flate/cmd/flate@latest
 docker pull ghcr.io/home-operations/flate:latest
 ```
 
+…or in a GitHub Actions workflow:
+
+```yaml
+- uses: home-operations/flate/action@main
+```
+
 ## Use
 
 ```bash
