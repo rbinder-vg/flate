@@ -62,19 +62,25 @@ signs:
     artifacts: all
     output: true
 
-brews:
+homebrew_casks:
   - name: flate
+    ids:
+      - flate
+    binaries:
+      - flate
     repository:
       owner: home-operations
       name: homebrew-tap
       branch: main
       token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
-    directory: Formula
     homepage: https://github.com/home-operations/flate
     description: Render and diff Flux GitOps repositories offline, without a cluster
-    license: AGPL-3.0
-    test: |
-      system "#{bin}/flate", "--version"
+    # Binaries aren't notarized — strip the quarantine bit so macOS doesn't
+    # block the first run with "developer cannot be verified".
+    hooks:
+      post:
+        install: |
+          system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/flate"] if OS.mac?
 
 # Org-enforced release immutability locks assets the moment a release is
 # published, so create the release as a draft (mutable) and let the workflow
