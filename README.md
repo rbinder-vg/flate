@@ -52,6 +52,12 @@ Validating a Flux GitOps repo from CI used to mean a `kind` cluster, a `flux ins
 ## Quick start
 
 ```bash
+brew install home-operations/tap/flate
+```
+
+…or with Go:
+
+```bash
 go install github.com/home-operations/flate/cmd/flate@latest
 ```
 
