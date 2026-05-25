@@ -71,6 +71,12 @@ homebrew_casks:
       - flate
     binaries:
       - flate
+    generate_completions_from_executable:
+      shell_parameter_format: cobra
+      shells:
+        - bash
+        - zsh
+        - fish
     repository:
       owner: home-operations
       name: homebrew-tap
