@@ -13,11 +13,13 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	"github.com/opencontainers/go-digest"
 	specs "github.com/opencontainers/image-spec/specs-go"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/source"
@@ -240,6 +242,73 @@ func TestFetcher_MutableTagRefreshesCache(t *testing.T) {
 	}
 }
 
+func TestFetcher_MutableTagUsesFreshIntervalResolveCache(t *testing.T) {
+	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+	v2 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v2\n"})
+	srv, setArtifact := startMutableFakeRegistry(t, v1, v2)
+
+	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	repo := &manifest.OCIRepository{
+		Name:      "mutable",
+		Namespace: "test",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       fmt.Sprintf("oci://%s/mutable", mustURL(t, srv.URL).Host),
+			Insecure:  true,
+			Interval:  metav1.Duration{Duration: time.Hour},
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "latest"},
+		},
+	}
+
+	art1, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	setArtifact(1)
+	srv.Close()
+	art2, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("second Fetch should use fresh resolve cache without registry: %v", err)
+	}
+	if art2.Digest != art1.Digest {
+		t.Fatalf("fresh interval cache should reuse digest %s, got %s", art1.Digest, art2.Digest)
+	}
+	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+		t.Fatalf("fresh interval cache content = %q", got)
+	}
+}
+
+func TestFetcher_TagCacheHitSkipsSecondPull(t *testing.T) {
+	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
+	srv, failBlobs := startFakeRegistryWithBlobGate(t, v1)
+
+	f := &Fetcher{Cache: source.NewCache(cacheroot.New(t.TempDir()))}
+	repo := &manifest.OCIRepository{
+		Name:      "stable-tag",
+		Namespace: "test",
+		OCIRepositorySpec: sourcev1.OCIRepositorySpec{
+			URL:       fmt.Sprintf("oci://%s/stable-tag", mustURL(t, srv.URL).Host),
+			Insecure:  true,
+			Reference: &sourcev1.OCIRepositoryRef{Tag: "v1"},
+		},
+	}
+
+	art1, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("first Fetch: %v", err)
+	}
+	failBlobs()
+	art2, err := f.Fetch(t.Context(), repo)
+	if err != nil {
+		t.Fatalf("second Fetch should use cached tag digest without pulling blobs: %v", err)
+	}
+	if art2.Digest != art1.Digest {
+		t.Fatalf("digest changed on stable tag cache hit: %s -> %s", art1.Digest, art2.Digest)
+	}
+	if got := mustReadFile(t, filepath.Join(art2.LocalPath, "app.yaml")); !strings.Contains(got, "v1") {
+		t.Fatalf("cached tag content = %q", got)
+	}
+}
+
 func TestFetcher_MutableRefreshFailureKeepsPreviousSlot(t *testing.T) {
 	v1 := newFakeOCIArtifact(t, map[string]string{"app.yaml": "version: v1\n"})
 	srv, _ := startMutableFakeRegistry(t, v1)
@@ -373,6 +442,53 @@ func startFakeRegistry(t *testing.T, manifestBytes, configBytes, layerBytes []by
 	srv := httptest.NewTLSServer(mux)
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+func startFakeRegistryWithBlobGate(t *testing.T, art fakeOCIArtifact) (*httptest.Server, func()) {
+	t.Helper()
+	var (
+		mu         sync.RWMutex
+		blobsFail  bool
+		configBody = art.config
+		layerBody  = art.layer
+	)
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v2/", func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/v2/"):
+			return
+		case strings.Contains(r.URL.Path, "/manifests/"):
+			w.Header().Set("Content-Type", ocispec.MediaTypeImageManifest)
+			w.Header().Set("Docker-Content-Digest", art.manifestDigest)
+			_, _ = w.Write(art.manifest)
+		case strings.Contains(r.URL.Path, "/blobs/"):
+			mu.RLock()
+			fail := blobsFail
+			mu.RUnlock()
+			if fail {
+				http.Error(w, "blob pulls disabled", http.StatusServiceUnavailable)
+				return
+			}
+			switch r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:] {
+			case art.configDigest:
+				_, _ = w.Write(configBody)
+			case art.layerDigest:
+				_, _ = w.Write(layerBody)
+			default:
+				http.NotFound(w, r)
+			}
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	srv := httptest.NewTLSServer(mux)
+	t.Cleanup(srv.Close)
+	failBlobs := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		blobsFail = true
+	}
+	return srv, failBlobs
 }
 
 type fakeOCIArtifact struct {

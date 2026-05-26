@@ -9,10 +9,11 @@ import (
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/home-operations/flate/internal/testutil"
 	"github.com/home-operations/flate/pkg/change"
 	"github.com/home-operations/flate/pkg/helm"
-	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/manifest"
+	"github.com/home-operations/flate/pkg/source/cacheroot"
 	"github.com/home-operations/flate/pkg/store"
 	"github.com/home-operations/flate/pkg/task"
 )
@@ -98,6 +99,78 @@ func TestController_FilterUnchangedShortCircuitsToReady(t *testing.T) {
 	}
 }
 
+func TestController_AllowMissingSecretsOmitsUnavailableValuesFrom(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "mychart/Chart.yaml", `apiVersion: v2
+name: mychart
+version: 0.1.0
+`)
+	testutil.WriteFile(t, dir, "mychart/templates/configmap.yaml", `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-cm
+data:
+  kept: {{ .Values.kept | quote }}
+  fallback: {{ .Values.missing | default "fallback" | quote }}
+`)
+
+	_, st := newTestControllerWithOptions(t, ReconcileOptions{AllowMissingSecrets: true})
+	src := &manifest.GitRepository{Name: "charts", Namespace: "flux-system"}
+	st.AddObject(src)
+	st.SetArtifact(src.Named(), &store.SourceArtifact{
+		Kind: manifest.KindGitRepository, URL: "file://" + dir, LocalPath: dir,
+	})
+	st.UpdateStatus(src.Named(), store.StatusReady, "")
+	st.AddObject(&manifest.ConfigMap{
+		Name:      "present-values",
+		Namespace: "default",
+		Data:      map[string]any{"values.yaml": "kept: kept-value\n"},
+	})
+	st.AddObject(&manifest.RawObject{
+		Kind:       "ExternalSecret",
+		APIVersion: "external-secrets.io/v1",
+		Name:       "app-creds",
+		Namespace:  "default",
+		Spec: map[string]any{
+			"target": map[string]any{"name": "app-values"},
+		},
+	})
+	hr := &manifest.HelmRelease{
+		Name: "demo", Namespace: "default",
+		HelmReleaseSpec: helmv2.HelmReleaseSpec{
+			Interval: metav1Duration(time.Hour),
+			Timeout:  ptrDuration(100 * time.Millisecond),
+			ValuesFrom: []manifest.ValuesReference{
+				{Kind: manifest.KindConfigMap, Name: "present-values"},
+				{Kind: manifest.KindSecret, Name: "app-values"},
+				{Kind: manifest.KindConfigMap, Name: "runtime-values"},
+			},
+		},
+		Chart: manifest.HelmChart{
+			Name:          "mychart",
+			RepoName:      "charts",
+			RepoNamespace: "flux-system",
+			RepoKind:      manifest.KindGitRepository,
+		},
+	}
+	st.AddObject(hr)
+
+	info := waitForStatus(t, st, hr.Named(), store.StatusReady)
+	if store.IsSkipped(info) {
+		t.Fatalf("generated valuesFrom refs should be omitted, not skip the HelmRelease: %+v", info)
+	}
+	art, ok := st.GetArtifact(hr.Named()).(*store.HelmReleaseArtifact)
+	if !ok {
+		t.Fatal("HelmRelease artifact was not written")
+	}
+	if got := renderedConfigMapValue(art.Manifests, "kept"); got != "kept-value" {
+		t.Fatalf("rendered kept = %q, want kept-value", got)
+	}
+	if got := renderedConfigMapValue(art.Manifests, "fallback"); got != "fallback" {
+		t.Fatalf("rendered fallback = %q, want fallback", got)
+	}
+}
+
 // TestController_HelmChartSourceResolvedViaResolver locks the iter-16
 // contract: the HR controller no longer maintains a chartSources
 // push-registry; HelmChartSource lookups go through
@@ -176,6 +249,20 @@ func TestHelmReleaseFingerprint_DifferentOnSpecChange(t *testing.T) {
 }
 
 func metav1Duration(d time.Duration) metav1.Duration { return metav1.Duration{Duration: d} }
+
+func renderedConfigMapValue(docs []map[string]any, key string) string {
+	for _, doc := range docs {
+		if manifest.DocKind(doc) != manifest.KindConfigMap {
+			continue
+		}
+		data, _ := doc["data"].(map[string]any)
+		value, _ := data[key].(string)
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
 
 func TestController_CollectHRDepsClone(t *testing.T) {
 	c, _ := newTestController(t, nil)

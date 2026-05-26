@@ -50,6 +50,9 @@ type Controller struct {
 	existence depwait.ExistenceLookup
 	renders   depwait.RenderInflight
 	preflight func(manifest.NamedResource) (string, bool)
+	// allowMissingSecrets extends the source-controller flag to
+	// HelmRelease valuesFrom refs that cannot be resolved offline.
+	allowMissingSecrets bool
 }
 
 // ReconcileOptions carries the post-bootstrap state the orchestrator
@@ -81,6 +84,9 @@ type ReconcileOptions struct {
 	// orchestrator before reconcile. When set for an id, the controller
 	// marks the resource Failed and does not render it.
 	PreflightFailure func(manifest.NamedResource) (string, bool)
+	// AllowMissingSecrets omits non-optional valuesFrom refs that point
+	// at known live-cluster/generated data or fail to materialize offline.
+	AllowMissingSecrets bool
 }
 
 // New constructs a HelmRelease controller.
@@ -102,6 +108,7 @@ func (c *Controller) Configure(opts ReconcileOptions) {
 	c.existence = opts.Existence
 	c.renders = opts.Renders
 	c.preflight = opts.PreflightFailure
+	c.allowMissingSecrets = opts.AllowMissingSecrets
 }
 
 // lookupParent reports the structural parent KS of id via the
@@ -245,6 +252,10 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 		return err
 	}
 
+	if c.allowMissingSecrets {
+		hr = c.omitGeneratedValuesFrom(hr)
+	}
+
 	// Pre-Prepare existence waits: helm.Prepare reads from the live
 	// Store synchronously, returning ErrObjectNotFound for missing
 	// chartRef-HelmChart CRDs and non-optional valuesFrom refs. A
@@ -253,19 +264,42 @@ func (c *Controller) reconcile(ctx context.Context, hr *manifest.HelmRelease) er
 	// would hard-fail here without waiting. Collect the existence-
 	// only deps (no Ready semantics needed; they just have to be in
 	// the store before Prepare reads through them) and Await them.
-	if preDeps := preparePrereqs(hr); len(preDeps) > 0 {
+	omittedValuesRefs := map[manifest.NamedResource]struct{}{}
+	for {
+		preDeps := preparePrereqs(hr)
+		if len(preDeps) == 0 {
+			break
+		}
+		var preSum depwait.Summary
 		if err := c.Await(ctx, id, c.newWaiter(id, hr.Timeout), preDeps,
 			"awaiting pre-render references",
 			func(sum depwait.Summary) error {
+				preSum = sum
 				return &manifest.DependencyFailedError{
 					Parent: id, Failed: sum.Failed, Reasons: sum.Messages,
 				}
 			}); err != nil {
+			if c.allowMissingSecrets {
+				if next, ok := c.omitFailedValuesFrom(hr, preSum.Failed); ok {
+					for _, omitted := range omittedValuesRefIDs(hr, next) {
+						omittedValuesRefs[omitted] = struct{}{}
+					}
+					hr = next
+					continue
+				}
+			}
 			return err
 		}
 		if obj, ok := store.Get[*manifest.HelmRelease](c.Store, id); ok {
 			hr = obj
 		}
+		if len(omittedValuesRefs) > 0 {
+			hr = removeValuesRefs(hr, omittedValuesRefs)
+		}
+		if c.allowMissingSecrets {
+			hr = c.omitGeneratedValuesFrom(hr)
+		}
+		break
 	}
 	if err := c.preflightError(id); err != nil {
 		return err
@@ -381,6 +415,175 @@ func (c *Controller) emitRenderedChildren(id manifest.NamedResource, docs []map[
 			c.Store.AddRendered(obj)
 		}
 	}
+}
+
+func (c *Controller) omitGeneratedValuesFrom(hr *manifest.HelmRelease) *manifest.HelmRelease {
+	return c.omitValuesFrom(hr, nil, true)
+}
+
+func (c *Controller) omitFailedValuesFrom(hr *manifest.HelmRelease, failed []manifest.NamedResource) (*manifest.HelmRelease, bool) {
+	failedSet := make(map[manifest.NamedResource]struct{}, len(failed))
+	for _, id := range failed {
+		failedSet[id] = struct{}{}
+	}
+	next := c.omitValuesFrom(hr, failedSet, false)
+	return next, next != hr
+}
+
+func (c *Controller) omitValuesFrom(
+	hr *manifest.HelmRelease,
+	failed map[manifest.NamedResource]struct{},
+	requireProducer bool,
+) *manifest.HelmRelease {
+	if hr == nil || len(hr.ValuesFrom) == 0 {
+		return hr
+	}
+	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
+	omitted := false
+	for _, ref := range hr.ValuesFrom {
+		id, ok := valuesRefID(hr, ref)
+		if !ok {
+			filtered = append(filtered, ref)
+			continue
+		}
+		if failed != nil {
+			if _, wasFailed := failed[id]; !wasFailed {
+				filtered = append(filtered, ref)
+				continue
+			}
+		}
+		if c.valuesRefExists(id) {
+			filtered = append(filtered, ref)
+			continue
+		}
+		if c.existence != nil && c.existence.IsFileIndexed(id) {
+			filtered = append(filtered, ref)
+			continue
+		}
+		producer, hasProducer := c.generatedValuesProducer(id)
+		if requireProducer && !hasProducer {
+			filtered = append(filtered, ref)
+			continue
+		}
+		omitted = true
+		args := []any{"id", hr.Named().String(), "ref", id.String()}
+		if hasProducer {
+			args = append(args, "producer", producer.String())
+		}
+		slog.Debug("helmrelease: omitted unavailable valuesFrom ref", args...)
+	}
+	if !omitted {
+		return hr
+	}
+	out := hr.Clone()
+	out.ValuesFrom = filtered
+	return out
+}
+
+func (c *Controller) valuesRefExists(id manifest.NamedResource) bool {
+	return c.Store.GetByName(id.Kind, id.Namespace, id.Name) != nil
+}
+
+func (c *Controller) generatedValuesProducer(id manifest.NamedResource) (manifest.NamedResource, bool) {
+	for _, obj := range c.Store.ListObjects("") {
+		raw, ok := obj.(*manifest.RawObject)
+		if !ok || raw.Namespace != id.Namespace {
+			continue
+		}
+		if rawProducesValuesRef(raw, id) {
+			return raw.Named(), true
+		}
+	}
+	return manifest.NamedResource{}, false
+}
+
+func rawProducesValuesRef(raw *manifest.RawObject, id manifest.NamedResource) bool {
+	switch raw.Kind {
+	case "ExternalSecret":
+		if id.Kind != manifest.KindSecret {
+			return false
+		}
+		target, _ := raw.Spec["target"].(map[string]any)
+		targetName, _ := target["name"].(string)
+		if targetName == "" {
+			targetName = raw.Name
+		}
+		return targetName == id.Name
+	case "SealedSecret":
+		if id.Kind != manifest.KindSecret {
+			return false
+		}
+		targetName := raw.Name
+		if tmpl, _ := raw.Spec["template"].(map[string]any); tmpl != nil {
+			if metadata, _ := tmpl["metadata"].(map[string]any); metadata != nil {
+				if name, _ := metadata["name"].(string); name != "" {
+					targetName = name
+				}
+			}
+		}
+		return targetName == id.Name
+	default:
+		return false
+	}
+}
+
+func valuesRefID(hr *manifest.HelmRelease, ref manifest.ValuesReference) (manifest.NamedResource, bool) {
+	if ref.Optional || ref.Name == "" {
+		return manifest.NamedResource{}, false
+	}
+	switch ref.Kind {
+	case manifest.KindSecret, manifest.KindConfigMap:
+		return manifest.NamedResource{Kind: ref.Kind, Namespace: hr.Namespace, Name: ref.Name}, true
+	default:
+		return manifest.NamedResource{}, false
+	}
+}
+
+func omittedValuesRefIDs(before, after *manifest.HelmRelease) []manifest.NamedResource {
+	if before == nil || after == nil {
+		return nil
+	}
+	kept := make(map[manifest.NamedResource]struct{}, len(after.ValuesFrom))
+	for _, ref := range after.ValuesFrom {
+		if id, ok := valuesRefID(after, ref); ok {
+			kept[id] = struct{}{}
+		}
+	}
+	var out []manifest.NamedResource
+	for _, ref := range before.ValuesFrom {
+		id, ok := valuesRefID(before, ref)
+		if !ok {
+			continue
+		}
+		if _, ok := kept[id]; !ok {
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+func removeValuesRefs(hr *manifest.HelmRelease, ids map[manifest.NamedResource]struct{}) *manifest.HelmRelease {
+	if hr == nil || len(ids) == 0 || len(hr.ValuesFrom) == 0 {
+		return hr
+	}
+	filtered := make([]manifest.ValuesReference, 0, len(hr.ValuesFrom))
+	omitted := false
+	for _, ref := range hr.ValuesFrom {
+		id, ok := valuesRefID(hr, ref)
+		if ok {
+			if _, drop := ids[id]; drop {
+				omitted = true
+				continue
+			}
+		}
+		filtered = append(filtered, ref)
+	}
+	if !omitted {
+		return hr
+	}
+	out := hr.Clone()
+	out.ValuesFrom = filtered
+	return out
 }
 
 // collectHRDeps returns hr's typed dependsOn entries (carrying any
