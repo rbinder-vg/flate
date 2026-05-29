@@ -2,6 +2,7 @@ package helm
 
 import (
 	"bytes"
+	"cmp"
 	"compress/gzip"
 	"errors"
 	"io"
@@ -9,7 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"sort"
+	"slices"
 	"sync"
 	atomicflag "sync/atomic"
 	"time"
@@ -160,6 +161,10 @@ func (c *diskRenderCache) Put(key string, payload []byte) {
 	// syncDir=false: a render cache miss is cheap to re-derive on the
 	// next invocation, so we trade durability for write throughput.
 	// Mirrors atomic.WriteFile's documented "high-churn cache" mode.
+	//
+	// atomic.WriteFile removes its staged tmpfile on any error path
+	// (see pkg/source/atomic/file.go's committed-bool defer guard),
+	// so a failed Put can't leak partial state into the cache root.
 	if err := atomic.WriteFile(p, buf.Bytes(), 0o600, false); err != nil {
 		slog.Debug("helm render cache: write", "path", p, "err", err)
 		return
@@ -244,11 +249,11 @@ func (c *diskRenderCache) sweep() {
 	// against ties (sort by mtime then path) so two test entries
 	// written within the same nanosecond don't evict in
 	// platform-dependent order.
-	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].mtime != entries[j].mtime {
-			return entries[i].mtime < entries[j].mtime
+	slices.SortFunc(entries, func(a, b entry) int {
+		if c := cmp.Compare(a.mtime, b.mtime); c != 0 {
+			return c
 		}
-		return entries[i].path < entries[j].path
+		return cmp.Compare(a.path, b.path)
 	})
 
 	for _, e := range entries {
