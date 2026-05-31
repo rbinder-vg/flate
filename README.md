@@ -59,12 +59,12 @@ The `[name]` positional on `get ks/hr` and `build`/`diff`/`test ks/hr` is matche
 
 Every reconcile-running command takes `--path <dir>` (default `.`); `--path-orig <dir>` switches into changed-only mode. `flate <verb> --help` lists every flag. `get`, `build`, `diff`, and `test` all run the same offline reconcile pipeline before producing output, so referenced Git, OCI, Helm, Bucket, or remote kustomize sources must be reachable. Source caches respect Flux intervals: immutable pins reuse cache; mutable refs refresh when their interval expires.
 
-| Verb | Targets | Notes |
-|---|---|---|
-| `get` | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`. |
-| `build` | `ks`, `hr`, `all` | Render Kustomizations and HelmReleases to YAML or JSON. |
-| `diff` | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output markdown` mode (GitHub-flavored). K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
-| `test` | `ks`, `hr`, `all` | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure. |
+| Verb    | Targets                     | Notes                                                                                                                                                                                                                                                                                                     |
+| ------- | --------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `get`   | `ks`, `hr`, `images`, `all` | List or summarize. `-o table` / `yaml` / `json` / `name`.                                                                                                                                                                                                                                                 |
+| `build` | `ks`, `hr`, `all`           | Render Kustomizations and HelmReleases to YAML or JSON.                                                                                                                                                                                                                                                   |
+| `diff`  | `ks`, `hr`, `images`, `all` | Path-keyed diff against `--path-orig`, rendered via [dyff](https://github.com/homeport/dyff) in `--output markdown` mode (GitHub-flavored). K8s-aware: list entries match by identifier (container name, env-var name), so a reorder shows as `⇆ order changed` instead of a wall of phantom value churn. |
+| `test`  | `ks`, `hr`, `all`           | Pytest-style `PASS` / `FAIL` / `SKIPPED` per resource. Non-zero exit on any failure.                                                                                                                                                                                                                      |
 
 `get ks` and `get hr` accept `-l/--selector key=value` for label filtering. `diff` accepts `--strip-attr <key>` (repeatable) to drop annotation/label keys before comparison; the default set covers chart-bump noise (`helm.sh/chart`, `checksum/config`, `checksum/secret`, `app.kubernetes.io/version`, `chart`). Helm template flags are available on every reconcile-running subcommand because flate reconciles the full graph before filtering output. Reconcile-running subcommands accept `--allow-missing-secrets` to soft-skip source auth Secrets and omit generated HR `valuesFrom` refs that only exist in the live cluster — see [Behaviors](#behaviors). `--enable-oci` (default `true`) gates `OCIRepository` reconciliation; set `=false` to skip it.
 
@@ -89,14 +89,14 @@ flate diff ks --path ./kubernetes --path-orig ../baseline/kubernetes
 
 ## Source kinds and auth
 
-| Kind | Status | Auth (`spec.secretRef`) |
-|---|---|---|
-| `GitRepository` | full | HTTPS: `username` + `password` or `bearerToken`. SSH: `identity` (+ optional `password`, `known_hosts`). |
-| `OCIRepository` | full | `.dockerconfigjson`. Falls back to `--registry-config`, then `~/.docker/config.json`. |
-| `HelmRepository` | full | HTTP basic: `username` + `password`; OCI flavor routes through the OCI puller. |
-| `HelmChart` | full | Inline (`HR.spec.chart`) and standalone CRD. |
-| `Bucket` | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds. |
-| `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path. |
+| Kind               | Status         | Auth (`spec.secretRef`)                                                                                  |
+| ------------------ | -------------- | -------------------------------------------------------------------------------------------------------- |
+| `GitRepository`    | full           | HTTPS: `username` + `password` or `bearerToken`. SSH: `identity` (+ optional `password`, `known_hosts`). |
+| `OCIRepository`    | full           | `.dockerconfigjson`. Falls back to `--registry-config`, then `~/.docker/config.json`.                    |
+| `HelmRepository`   | full           | HTTP basic: `username` + `password`; OCI flavor routes through the OCI puller.                           |
+| `HelmChart`        | full           | Inline (`HR.spec.chart`) and standalone CRD.                                                             |
+| `Bucket`           | `generic` only | `accesskey` + `secretkey`. `aws`/`gcp`/`azure` fail loud — use static creds.                             |
+| `ExternalArtifact` | `file://` only | `status.artifact.url` must be a local path.                                                              |
 
 PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treated as missing — auth fails with a clear "missing username/password" instead of attempting auth with the placeholder string. See [Behaviors](#behaviors) for `--allow-missing-secrets`, which soft-skips affected sources end-to-end.
 
@@ -112,18 +112,18 @@ PLACEHOLDER-wiped values (the always-on wipe of cleartext Secret data) are treat
 
 ```yaml
 dependsOn:
-- name: infra-controllers
-  readyExpr: |
-    dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
+    - name: infra-controllers
+      readyExpr: |
+          dep.status.conditions.exists(c, c.type == "Healthy" && c.status == "True")
 ```
 
 **Substitution opt-out** — the `kustomize.toolkit.fluxcd.io/substitute: disabled` label or annotation is honored per-resource, matching kustomize-controller. Used for ConfigMaps embedding bash array expansions envsubst can't parse.
 
 **Signature verification** — `OCIRepository` uses cosign keyed mode (`spec.verify.secretRef` with PEM keys) verified through stdlib crypto, no sigstore dep tree. `GitRepository` uses PGP via `spec.verify.{mode,secretRef}`. Cosign keyless and `notation` are not supported (see [Limits](#limits)).
 
-**ResourceSet inputs (`inputs` / `inputsFrom`)** — a `ResourceSet` renders its `resources` / `resourcesTemplate` once per input set. Inline `spec.inputs` and `spec.inputsFrom` both contribute sets; each `inputsFrom` entry references a `ResourceSetInputProvider` by `name` or by label `selector` (scoped to the ResourceSet's namespace). The built-in `inputs.provider` block on every set reflects the *sourcing* CR's `apiVersion`/`kind`/`name`/`namespace` — the referenced provider for `inputsFrom`, the ResourceSet itself for inline.
+**ResourceSet inputs (`inputs` / `inputsFrom`)** — a `ResourceSet` renders its `resources` / `resourcesTemplate` once per input set. Inline `spec.inputs` and `spec.inputsFrom` both contribute sets; each `inputsFrom` entry references a `ResourceSetInputProvider` by `name` or by label `selector` (scoped to the ResourceSet's namespace). The built-in `inputs.provider` block on every set reflects the _sourcing_ CR's `apiVersion`/`kind`/`name`/`namespace` — the referenced provider for `inputsFrom`, the ResourceSet itself for inline.
 
-Combination follows `spec.inputStrategy`: **Flatten** (default) concatenates all sets (`<< inputs.foo >>`); **Permute** Cartesian-products across providers, nesting each under its normalized name (`<< inputs.<provider>.foo >>`) plus a synthetic `inputs.id`, capped at 10000 permutations. A ResourceSet that *emits* `ResourceSetInputProvider` objects is resolved by the discovery fixed-point pass, so a later ResourceSet's `inputsFrom.selector` picks them up (the two-stage namespace→deployment pattern). `Static` providers export `spec.defaultValues`; for dynamic providers, pre-bake `status.exportedInputs` to render them offline (see [Limits](#limits)).
+Combination follows `spec.inputStrategy`: **Flatten** (default) concatenates all sets (`<< inputs.foo >>`); **Permute** Cartesian-products across providers, nesting each under its normalized name (`<< inputs.<provider>.foo >>`) plus a synthetic `inputs.id`, capped at 10000 permutations. A ResourceSet that _emits_ `ResourceSetInputProvider` objects is resolved by the discovery fixed-point pass, so a later ResourceSet's `inputsFrom.selector` picks them up (the two-stage namespace→deployment pattern). `Static` providers export `spec.defaultValues`; for dynamic providers, pre-bake `status.exportedInputs` to render them offline (see [Limits](#limits)).
 
 ## Limits
 

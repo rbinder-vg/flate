@@ -8,10 +8,10 @@ integration suite.
 - `simple/` — a hand-crafted minimal cluster used by E2E tests. Exercises
   the Kustomization + HelmRelease pipeline end-to-end without any network
   access.
-  - `cluster/` — Flux GitRepository, Kustomization, and HelmRelease objects.
-  - `apps/` — kustomize-rendered ConfigMap + Namespace.
-  - `charts/mychart/` — a tiny local Helm chart referenced via
-    `sourceRef.kind: GitRepository`.
+    - `cluster/` — Flux GitRepository, Kustomization, and HelmRelease objects.
+    - `apps/` — kustomize-rendered ConfigMap + Namespace.
+    - `charts/mychart/` — a tiny local Helm chart referenced via
+      `sourceRef.kind: GitRepository`.
 
 - `components/` — two consumer apps (`app-a`, `app-b`) referencing a shared
   kustomize component (`components/shared`). Exists to test change-detection

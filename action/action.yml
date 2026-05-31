@@ -60,7 +60,8 @@ runs:
         INPUT_TOKEN: ${{ inputs.token }}
         ACTION_REF: ${{ github.action_ref }}
         ACTION_REPO: ${{ github.action_repository }}
-      run: | # zizmor: ignore[github-env] FLATE_CACHE_DIR is the action's contract; the value is a runner-provided path joined with a literal
+      run:
+        | # zizmor: ignore[github-env] FLATE_CACHE_DIR is the action's contract; the value is a runner-provided path joined with a literal
         set -euo pipefail
 
         # SemVer pattern — used both to recognize tag-style refs and to filter
@@ -144,7 +145,8 @@ runs:
       env:
         VERSION: ${{ steps.resolve.outputs.version }}
         FLATE_TOOL_DIR: ${{ inputs.bindir }}
-      run: | # zizmor: ignore[github-env] FLATE_TOOL_DIR is composed of controlled inputs and runner-provided paths; adding to PATH is the action's contract
+      run:
+        | # zizmor: ignore[github-env] FLATE_TOOL_DIR is composed of controlled inputs and runner-provided paths; adding to PATH is the action's contract
         set -euo pipefail
 
         OS=$(echo "${RUNNER_OS}" | tr '[:upper:]' '[:lower:]')

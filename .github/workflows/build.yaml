@@ -116,4 +116,3 @@ jobs:
           VERSION: ${{ steps.meta.outputs.version }}
         run: |-
           docker buildx imagetools inspect "ghcr.io/${{ github.repository }}:${VERSION}"
-

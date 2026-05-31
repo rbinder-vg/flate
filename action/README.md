@@ -4,12 +4,12 @@ Install the [flate](https://github.com/home-operations/flate) CLI on Linux, macO
 
 ```yaml
 steps:
-  # Installs flate matching the pinned action ref and reuses its
-  # on-disk cache across runs.
-  - uses: home-operations/flate/action@0.1.30
-    with:
-      cache: true
-  - run: flate get ks --path ./kubernetes
+    # Installs flate matching the pinned action ref and reuses its
+    # on-disk cache across runs.
+    - uses: home-operations/flate/action@0.1.30
+      with:
+          cache: true
+    - run: flate get ks --path ./kubernetes
 ```
 
 The action downloads the release archive from GitHub, verifies its SHA-256, installs into `$RUNNER_TOOL_CACHE` (or the path given via `bindir`), and exports `FLATE_CACHE_DIR` so subsequent `flate` calls write to a predictable location.
@@ -38,14 +38,14 @@ When `version` is not set, the action inspects the ref it was pinned to (`github
 2. If the ref is a commit SHA (full or short), the action queries the GitHub `/tags` API for its own repo and installs the SemVer tag whose commit matches — this is the path used by workflows that pin actions to immutable digests for supply-chain security.
 3. Otherwise (branches, dangling SHAs), the action falls back to `latest`.
 
-| Pinned as                                              | Installed version |
-| ------------------------------------------------------ | ----------------- |
-| `home-operations/flate/action@0.1.26`                  | `0.1.26`          |
-| `home-operations/flate/action@v0.1.26`                 | `0.1.26`          |
-| `home-operations/flate/action@2e8f4c8…` (release SHA)  | matching tag      |
-| `home-operations/flate/action@main`                    | `latest`          |
-| `home-operations/flate/action@<non-release-sha>`       | `latest`          |
-| any of the above, with `version: 0.1.20`               | `0.1.20`          |
+| Pinned as                                             | Installed version |
+| ----------------------------------------------------- | ----------------- |
+| `home-operations/flate/action@0.1.26`                 | `0.1.26`          |
+| `home-operations/flate/action@v0.1.26`                | `0.1.26`          |
+| `home-operations/flate/action@2e8f4c8…` (release SHA) | matching tag      |
+| `home-operations/flate/action@main`                   | `latest`          |
+| `home-operations/flate/action@<non-release-sha>`      | `latest`          |
+| any of the above, with `version: 0.1.20`              | `0.1.20`          |
 
 The SHA-to-tag lookup uses `inputs.token` (defaulted to `${{ github.token }}`) and degrades to `latest` if the API call fails or `jq` isn't available.
 
