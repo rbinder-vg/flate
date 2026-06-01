@@ -3,7 +3,6 @@
 > Render and diff Flux GitOps repositories fully offline — one static binary, no cluster, no `kubectl`, no shellouts.
 
 [![Tests](https://github.com/home-operations/flate/actions/workflows/tests.yaml/badge.svg)](https://github.com/home-operations/flate/actions/workflows/tests.yaml)
-[![Build](https://github.com/home-operations/flate/actions/workflows/build.yaml/badge.svg)](https://github.com/home-operations/flate/actions/workflows/build.yaml)
 [![Lint](https://github.com/home-operations/flate/actions/workflows/lint.yaml/badge.svg)](https://github.com/home-operations/flate/actions/workflows/lint.yaml)
 [![Release](https://img.shields.io/github/v/release/home-operations/flate)](https://github.com/home-operations/flate/releases)
 [![License](https://img.shields.io/github/license/home-operations/flate)](LICENSE)
