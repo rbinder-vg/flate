@@ -440,6 +440,58 @@ spec:
 	}
 }
 
+// TestRun_RecognizesExistenceOnlyInTreeSourceAsPresent reproduces the
+// discovery-only lifecycle bug behind unsubstituted OCIRepository fetches:
+// the file walker records sources in Existence, not the Store, when they live
+// under a Flux Kustomization's spec.path. Bootstrap aliasing must still treat
+// that source as already present, or it synthesizes a bootstrap alias and lets
+// the raw unsubstituted source reconcile too early.
+func TestRun_RecognizesExistenceOnlyInTreeSourceAsPresent(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "ks.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: cluster
+  namespace: flux-system
+spec:
+  path: ./apps
+  sourceRef:
+    kind: GitRepository
+    name: shared-infra
+    namespace: flux-system
+  interval: 1h
+`)
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "apps", "shared-infra.yaml"), `---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: shared-infra
+  namespace: flux-system
+spec:
+  url: https://github.com/upstream/shared-infra.git
+  ref:
+    branch: main
+`)
+	testutil.WriteFileAt(t, filepath.Join(dir, "cluster", "apps", "kustomization.yaml"), "resources:\n  - ./shared-infra.yaml\n")
+
+	res, err := discovery.Run(context.Background(), discovery.Config{
+		Path: dir, Store: store.New(), WipeSecrets: true,
+	})
+	if err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+
+	id := manifest.NamedResource{Kind: manifest.KindGitRepository, Namespace: "flux-system", Name: "shared-infra"}
+	if _, ok := res.Existence.Get(id); !ok {
+		t.Fatalf("expected in-tree GitRepository to stay recorded in Existence")
+	}
+	if art := res.Existence; art == nil {
+		t.Fatalf("expected Existence index in discovery result")
+	}
+}
+
 // TestRun_ComponentGeneratorMaterializesCM mirrors home-operations/flate
 // issue #396: a Flux Kustomization references a kustomize Component
 // whose configMapGenerator produces cluster-settings. Without the

@@ -854,15 +854,7 @@ func (l *Loader) recordSourceRefs(obj manifest.BaseManifest) {
 //   - Kustomization, ResourceSet, ResourceSetInputProvider — the
 //     reconcile driver and its meta-discovery hooks (RS renders to
 //     more KSes; RSIPs feed RS selectors).
-//   - Sources (GitRepository, OCIRepository, HelmRepository,
-//     HelmChartSource, Bucket, ExternalArtifact) — sources are
-//     rarely patched at render time and need to be visible at
-//     discovery for the bootstrap-alias pass to recognize them as
-//     already-known (otherwise every GitRepository gets aliased to
-//     the working tree, which silently redirects every KS's render
-//     to the wrong source root).
-//
-// HelmReleases, ConfigMaps, Secrets, and other reconcilables flow
+// HelmReleases, sources, ConfigMaps, Secrets, and other reconcilables flow
 // from KS render output via emitRenderedChildren — or, when no KS
 // would render them, through the orchestrator's post-discovery
 // orphan-promotion sweep.
@@ -870,13 +862,7 @@ func isDiscoveryKind(obj manifest.BaseManifest) bool {
 	switch obj.(type) {
 	case *manifest.Kustomization,
 		*manifest.ResourceSet,
-		*manifest.ResourceSetInputProvider,
-		*manifest.GitRepository,
-		*manifest.OCIRepository,
-		*manifest.HelmRepository,
-		*manifest.HelmChartSource,
-		*manifest.Bucket,
-		*manifest.ExternalArtifact:
+		*manifest.ResourceSetInputProvider:
 		return true
 	}
 	return false

@@ -12,9 +12,9 @@ import (
 )
 
 // TestDiscoveryOnly_SkipsNonDiscoveryKinds locks the step-4 contract:
-// under DiscoveryOnly, the file walker AddObjects only KS + RS + RSIP
-// + source kinds. HRs, CMs, Secrets, and raw manifests stay out of
-// the Store and land in Existence instead.
+// under DiscoveryOnly, the file walker AddObjects only KS + RS + RSIP.
+// HRs, sources, CMs, Secrets, and raw manifests stay out of the Store
+// and land in Existence instead.
 func TestDiscoveryOnly_SkipsNonDiscoveryKinds(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "ks.yaml", `
@@ -29,6 +29,14 @@ spec:
   sourceRef:
     kind: GitRepository
     name: flux-system
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: OCIRepository
+metadata:
+  name: charts
+  namespace: flux-system
+spec:
+  url: oci://example.test/charts
 ---
 apiVersion: helm.toolkit.fluxcd.io/v2
 kind: HelmRelease
@@ -72,6 +80,14 @@ data:
 	}
 	if _, ok := l.Existence.Get(hrID); !ok {
 		t.Errorf("HelmRelease must be recorded in Existence index")
+	}
+
+	ociID := manifest.NamedResource{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"}
+	if st.GetObject(ociID) != nil {
+		t.Errorf("OCIRepository should NOT be in Store under DiscoveryOnly; should be in Existence")
+	}
+	if _, ok := l.Existence.Get(ociID); !ok {
+		t.Errorf("OCIRepository must be recorded in Existence index")
 	}
 
 	cmID := manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}
@@ -227,13 +243,11 @@ data:
 	}
 }
 
-// TestDiscoveryOnly_SourcesStayFileLoaded pins the regression fix
-// found on JJGadgets/Biohazard: sources (GitRepository,
-// OCIRepository, HelmRepository) must remain in the Store under
-// DiscoveryOnly, otherwise aliasBootstrapSources can't recognize
-// them and aliases every source URL to the working tree (silently
-// redirecting every KS render to the wrong source root).
-func TestDiscoveryOnly_SourcesStayFileLoaded(t *testing.T) {
+// TestDiscoveryOnly_SourcesStayExistenceOnly pins the corrected lifecycle:
+// file-loaded sources under DiscoveryOnly stay out of the Store until they are
+// render-emitted or orphan-promoted. Bootstrap aliasing must consult the
+// Existence index instead of requiring live Store objects.
+func TestDiscoveryOnly_SourcesStayExistenceOnly(t *testing.T) {
 	dir := t.TempDir()
 	testutil.WriteFile(t, dir, "src.yaml", `
 apiVersion: source.toolkit.fluxcd.io/v1
@@ -274,8 +288,11 @@ spec:
 		{Kind: manifest.KindOCIRepository, Namespace: "flux-system", Name: "charts"},
 		{Kind: manifest.KindHelmRepository, Namespace: "default", Name: "podinfo"},
 	} {
-		if st.GetObject(want) == nil {
-			t.Errorf("source %s must stay in Store under DiscoveryOnly; got nil", want.String())
+		if st.GetObject(want) != nil {
+			t.Errorf("source %s must NOT be in Store under DiscoveryOnly", want.String())
+		}
+		if _, ok := l.Existence.Get(want); !ok {
+			t.Errorf("source %s must be recorded in Existence under DiscoveryOnly", want.String())
 		}
 	}
 }

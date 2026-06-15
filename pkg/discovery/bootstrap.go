@@ -5,6 +5,7 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
 )
@@ -98,7 +99,7 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 	// existing doubles as a dedup set: after a successful publish we add
 	// the new id so repeated sourceRefs across KSes are skipped without
 	// a second map.
-	existing := knownSourceIDs(d.cfg.Store, manifest.KindGitRepository, manifest.KindOCIRepository)
+	existing := knownSourceIDs(d.cfg.Store, d.loader.Existence, manifest.KindGitRepository, manifest.KindOCIRepository)
 	var aliased []manifest.NamedResource
 	for _, ks := range store.ListAs[*manifest.Kustomization](d.cfg.Store, manifest.KindKustomization) {
 		id := manifest.NamedResource{Kind: ks.SourceKind, Namespace: ks.SourceNamespace, Name: ks.SourceName}
@@ -202,14 +203,24 @@ func newBootstrapAlias(id manifest.NamedResource, repoRoot string) (manifest.Bas
 	return nil, "", false
 }
 
-// knownSourceIDs returns the IDs of every object currently in s for
-// the given kinds. Used by aliasing pass 1 to skip sourceRefs that
-// already have a real CR.
-func knownSourceIDs(s *store.Store, kinds ...string) map[manifest.NamedResource]struct{} {
+// knownSourceIDs returns the IDs of every source currently materialized in the
+// Store OR recorded in the Existence index for the given kinds. DiscoveryOnly
+// keeps sources existence-only until they are render-emitted or orphan-
+// promoted, but bootstrap aliasing still needs to recognize those file-loaded
+// CRs as already present so it doesn't synthesize over them.
+func knownSourceIDs(s *store.Store, existence *loader.ExistenceIndex, kinds ...string) map[manifest.NamedResource]struct{} {
 	out := make(map[manifest.NamedResource]struct{})
 	for _, kind := range kinds {
 		for _, obj := range s.ListObjects(kind) {
 			out[obj.Named()] = struct{}{}
+		}
+	}
+	for id := range existence.All() {
+		for _, kind := range kinds {
+			if id.Kind == kind {
+				out[id] = struct{}{}
+				break
+			}
 		}
 	}
 	return out
