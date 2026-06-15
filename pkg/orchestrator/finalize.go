@@ -47,7 +47,10 @@ func (o *Orchestrator) detectOrphans(failed map[manifest.NamedResource]store.Sta
 			continue
 		}
 		if !prefixesBuilt {
-			prefixes = loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache)
+			// By the time detectOrphans runs, render-emitted sources are in the
+			// store with substituted values; the existence index is only consulted
+			// here for the rare objects that were never promoted or emitted.
+			prefixes = loader.KSPathPrefixesLocalOnly(o.store, o.repoRoot, o.componentCache, o.existence)
 			prefixesBuilt = true
 		}
 		parent, ok := loader.LongestParent(prefixes, file, id)

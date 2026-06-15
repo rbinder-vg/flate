@@ -50,9 +50,15 @@ type KSPathPrefix struct {
 // A source is "local" — excluded from the result — when: the sourceRef is bare
 // (→ BootstrapSourceID), the id IS BootstrapSourceID, the source carries a
 // working-tree artifact (aliased by discovery, LocalPath == repoRoot), or no
-// source object exists yet (a missing sourceRef that bootstrap aliasing
-// resolves). Only an in-tree, non-bootstrap, non-aliased source CR is external.
-func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedResource]struct{} {
+// source CR was loaded at all (missing sourceRef → bootstrap aliasing resolves
+// it locally). Only an in-tree, non-bootstrap, non-aliased source CR is
+// external.
+//
+// existence, when non-nil, is checked alongside the Store so that source CRs
+// kept existence-only by DiscoveryOnly (they live under a KS's spec.path and
+// haven't been render-emitted yet) are still treated as present — not as
+// missing/bootstrap-aliased.
+func ExternalSourcedKSIDs(s *store.Store, repoRoot string, existence *ExistenceIndex) map[manifest.NamedResource]struct{} {
 	out := map[manifest.NamedResource]struct{}{}
 	for _, ks := range store.ListAs[*manifest.Kustomization](s, manifest.KindKustomization) {
 		if ks.Path == "" || ks.SourceName == "" {
@@ -65,8 +71,13 @@ func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedRes
 		if art, ok := s.GetArtifact(src).(*store.SourceArtifact); ok && art.LocalPath == repoRoot {
 			continue
 		}
+		// A sourceRef that has no store object AND no existence-index entry is
+		// genuinely missing — bootstrap aliasing will have created a local
+		// synthetic for it. Skip so the KS is treated as local-sourced.
 		if s.GetObject(src) == nil {
-			continue
+			if _, ok := existence.Get(src); !ok {
+				continue
+			}
 		}
 		out[ks.Named()] = struct{}{}
 	}
@@ -77,9 +88,13 @@ func ExternalSourcedKSIDs(s *store.Store, repoRoot string) map[manifest.NamedRes
 // Kustomizations' claims dropped (see ExternalSourcedKSIDs). Use this for the
 // parent index, orphan promotion, and any other local-tree path attribution so
 // an external-sourced KS never becomes the structural parent of local resources.
-func KSPathPrefixesLocalOnly(s *store.Store, repoRoot string, cache *manifest.ComponentCache) []KSPathPrefix {
+//
+// existence, when non-nil, is forwarded to ExternalSourcedKSIDs so that source
+// CRs held only in the existence index (DiscoveryOnly mode) are recognised as
+// in-tree CRs rather than missing/bootstrap-aliased ones.
+func KSPathPrefixesLocalOnly(s *store.Store, repoRoot string, cache *manifest.ComponentCache, existence *ExistenceIndex) []KSPathPrefix {
 	all := KSPathPrefixesWithCache(s, repoRoot, cache)
-	external := ExternalSourcedKSIDs(s, repoRoot)
+	external := ExternalSourcedKSIDs(s, repoRoot, existence)
 	if len(external) == 0 {
 		return all
 	}

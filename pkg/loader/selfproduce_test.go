@@ -42,7 +42,7 @@ func TestBuildSelfProduceIndex_BareDirComponentNamespace(t *testing.T) {
 	}
 	s.AddObject(clusterApps)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := BuildSelfProduceIndex(s, dir, nil, true, nil)
 
 	// Produced in EVERY group's namespace (the namespace transformer stamps
 	// the component's namespace-less ConfigMap per base) — not just the first.
@@ -75,7 +75,7 @@ func TestBuildSelfProduceIndex_NonProducerNotAttributed(t *testing.T) {
 	}
 	s.AddObject(ks)
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := BuildSelfProduceIndex(s, dir, nil, true, nil)
 	if got := idx.ProducedBy(cmID("flux-system")); len(got) != 0 {
 		t.Errorf("ProducedBy = %v, want empty (KS produces no cluster-settings)", got)
 	}
@@ -124,7 +124,7 @@ func TestBuildSelfProduceIndex_RecordsProducers(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers, true)
+	BuildSelfProduceIndex(s, dir, producers, true, nil)
 
 	want := map[manifest.NamedResource]string{ // target → producer name
 		secretID("secure", "app-values"): "app-creds",
@@ -165,7 +165,7 @@ func TestBuildSelfProduceIndex_NamePrefixNotFollowed(t *testing.T) {
 	})
 
 	producers := &manifest.ProducerIndex{}
-	BuildSelfProduceIndex(s, dir, producers, true)
+	BuildSelfProduceIndex(s, dir, producers, true, nil)
 
 	if _, ok := producers.Producer(secretID("secure", "app-values")); !ok {
 		t.Error("producer not recorded under its raw target name")
@@ -206,7 +206,7 @@ func TestBuildSelfProduceIndex_SynthesizesPlaceholderSecret(t *testing.T) {
 	existing := &manifest.Secret{Name: "pre-secret", Namespace: "secure", StringData: map[string]any{"K": "real"}}
 	s.AddObject(existing)
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true, nil)
 
 	got, _ := s.GetObject(secretID("secure", "app-secret")).(*manifest.Secret)
 	if got == nil {
@@ -248,7 +248,7 @@ func TestBuildSelfProduceIndex_MaterializesSopsSecret(t *testing.T) {
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
 	})
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true)
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, true, nil)
 
 	got, _ := s.GetObject(secretID("flux-system", "cluster-secrets")).(*manifest.Secret)
 	if got == nil {
@@ -278,7 +278,7 @@ func TestBuildSelfProduceIndex_NoSynthesisWithoutWipe(t *testing.T) {
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps"},
 	})
 
-	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, false)
+	BuildSelfProduceIndex(s, dir, &manifest.ProducerIndex{}, false, nil)
 
 	if obj := s.GetObject(secretID("secure", "app-secret")); obj != nil {
 		t.Errorf("wipeSecrets=false must suppress synthesis; got %#v", obj)

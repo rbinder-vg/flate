@@ -58,7 +58,7 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 		&store.SourceArtifact{Kind: manifest.KindGitRepository, URL: "file://" + repoRoot, LocalPath: repoRoot},
 	)
 
-	ext := ExternalSourcedKSIDs(s, repoRoot)
+	ext := ExternalSourcedKSIDs(s, repoRoot, nil)
 	if _, ok := ext[external.Named()]; !ok {
 		t.Errorf("external-sourced KS must be flagged; got %v", ext)
 	}
@@ -69,7 +69,7 @@ func TestKSPathPrefixesLocalOnly_DropsExternalSourced(t *testing.T) {
 		t.Errorf("working-tree-aliased source must NOT be flagged")
 	}
 
-	prefixes := KSPathPrefixesLocalOnly(s, repoRoot, nil)
+	prefixes := KSPathPrefixesLocalOnly(s, repoRoot, nil, nil)
 	seen := map[manifest.NamedResource]bool{}
 	for _, p := range prefixes {
 		seen[p.ID] = true

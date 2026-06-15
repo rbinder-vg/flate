@@ -126,6 +126,18 @@ func (d *discoverer) aliasMissingKustomizationSources(repoRoot string) []manifes
 // offline so we substitute the local checkout. Returns the IDs
 // overridden so the multi-alias footgun check sees them.
 //
+// Two sub-passes:
+//   - Store-resident GRs: normal case, the GR was orphan-promoted or loaded
+//     before aliasBootstrapSources ran.
+//   - Existence-index GRs: GRs whose file sits under a KS's spec.path are
+//     kept existence-only by DiscoveryOnly. At the time aliasBootstrapSources
+//     runs, orphan promotion hasn't fired yet, so self-referential GRs that
+//     happen to live outside any KS's spec.path are still in the index. We
+//     parse each one into a scratch store, URL-match, and — only on a match —
+//     promote it into the real store and stamp the working-tree artifact.
+//     Non-matching existence-only GRs are left in the index so the parent KS
+//     can render-emit them with postBuild substitution applied.
+//
 // No alreadyAliased skip-set needed: pass 1 publishes synthetic URLs
 // (file:// or oci://flate-bootstrap-alias/...) that normalizeGitURL
 // always rejects. A pass-1 alias can never URL-match a working-tree
@@ -137,6 +149,9 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 		return nil
 	}
 	var overridden []manifest.NamedResource
+
+	// Sub-pass A: store-resident GRs (already in the store via earlier
+	// orphan promotion, seedBootstrapSource, or AddObject by the loader).
 	for _, repo := range store.ListAs[*manifest.GitRepository](d.cfg.Store, manifest.KindGitRepository) {
 		id := repo.Named()
 		normalized := normalizeGitURL(repo.URL)
@@ -152,6 +167,48 @@ func (d *discoverer) overrideSelfReferentialGitRepositories(repoRoot string) []m
 		})
 		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
 		slog.Debug("discovery: aliased in-tree GitRepository to working tree (URL matches working-tree remote)",
+			"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
+		overridden = append(overridden, id)
+	}
+
+	// Sub-pass B: existence-index GRs not yet in the store. Parse each
+	// one into a scratch store so we can read its URL without committing
+	// it to the real store. Only URL-matched GRs get promoted — non-
+	// matching ones stay existence-only and are later render-emitted by
+	// their parent KS (with postBuild substitution applied).
+	scratch := store.New()
+	for id := range d.loader.Existence.All() {
+		if id.Kind != manifest.KindGitRepository {
+			continue
+		}
+		if d.cfg.Store.GetObject(id) != nil {
+			continue // already handled in sub-pass A
+		}
+		if !d.loader.Existence.Promote(scratch, id, d.cfg.WipeSecrets) {
+			continue
+		}
+		repo, ok := scratch.GetObject(id).(*manifest.GitRepository)
+		if !ok {
+			continue
+		}
+		normalized := normalizeGitURL(repo.URL)
+		if normalized == "" {
+			continue
+		}
+		if _, match := remotes[normalized]; !match {
+			continue
+		}
+		// URL-matched: promote to real store and set working-tree artifact.
+		// The artifact makes the source controller's reconcile a no-op
+		// (artifact already set → early-exit), so the raw pre-substitution
+		// manifest never triggers a real fetch.
+		d.cfg.Store.AddObject(repo)
+		d.cfg.Store.SetArtifact(id, &store.SourceArtifact{
+			Kind: manifest.KindGitRepository,
+			URL:  "file://" + repoRoot, LocalPath: repoRoot,
+		})
+		d.cfg.Store.UpdateStatus(id, store.StatusReady, "bootstrap alias (URL matches working tree)")
+		slog.Debug("discovery: aliased existence-index GitRepository to working tree (URL matches working-tree remote)",
 			"id", id.String(), "url", repo.URL, "normalizedKey", normalized, "localPath", repoRoot)
 		overridden = append(overridden, id)
 	}
