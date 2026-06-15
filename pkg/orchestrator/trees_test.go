@@ -190,3 +190,64 @@ func TestRenderTrees_RepoRootRelativeNoGit(t *testing.T) {
 		t.Errorf("change = %+v; want ConfigMap demo changed", c)
 	}
 }
+
+// TestRenderTrees_DisableChangedOnly checks that Config.DisableChangedOnly
+// causes both unchanged and changed resources to render on both sides.
+// The cluster has two independent apps; only app-a's ConfigMap changes.
+// In normal (changed-only) mode app-b is scoped out; with DisableChangedOnly
+// it must appear in both sides' rendered output.
+func TestRenderTrees_DisableChangedOnly(t *testing.T) {
+	baseDir := t.TempDir()
+	headDir := t.TempDir()
+	writeCluster(t, baseDir, "v1", "same")
+	writeCluster(t, headDir, "v2", "same") // only app-a's ConfigMap data differs
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// --- changed-only (default) ---
+	base, head, err := orchestrator.RenderTrees(ctx,
+		orchestrator.Tree{RepoRoot: baseDir},
+		orchestrator.Tree{RepoRoot: headDir},
+		orchestrator.Config{WipeSecrets: true, Concurrency: 4})
+	if err != nil {
+		t.Fatalf("RenderTrees (changed-only): %v", err)
+	}
+	for label, res := range map[string]*orchestrator.Result{"base": base.Result, "head": head.Result} {
+		if configMapNames(res)["cfg-b"] {
+			t.Errorf("%s: cfg-b must be scoped out in changed-only mode", label)
+		}
+	}
+
+	// --- full render ---
+	baseFull, headFull, err := orchestrator.RenderTrees(ctx,
+		orchestrator.Tree{RepoRoot: baseDir},
+		orchestrator.Tree{RepoRoot: headDir},
+		orchestrator.Config{WipeSecrets: true, Concurrency: 4, DisableChangedOnly: true})
+	if err != nil {
+		t.Fatalf("RenderTrees (DisableChangedOnly): %v", err)
+	}
+	for label, res := range map[string]*orchestrator.Result{"base": baseFull.Result, "head": headFull.Result} {
+		names := configMapNames(res)
+		if !names["cfg-a"] {
+			t.Errorf("%s: cfg-a missing in full render", label)
+		}
+		if !names["cfg-b"] {
+			t.Errorf("%s: cfg-b must render in full (DisableChangedOnly) mode", label)
+		}
+	}
+
+	// The structured diff still reports only cfg-a changed (cfg-b is
+	// identical on both sides so it cancels out).
+	changes := diff.Changes(
+		diff.DocsFromManifests(baseFull.Result.Manifests, nil),
+		diff.DocsFromManifests(headFull.Result.Manifests, nil),
+		diff.Options{},
+	)
+	if len(changes) != 1 {
+		t.Fatalf("full render: want exactly 1 change (cfg-a), got %d: %+v", len(changes), changes)
+	}
+	if c := changes[0]; c.Name != "cfg-a" || c.Status != diff.StatusChanged {
+		t.Errorf("full render: change = %+v; want ConfigMap cfg-a changed", c)
+	}
+}

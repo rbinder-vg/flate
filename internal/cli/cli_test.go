@@ -831,6 +831,126 @@ func TestJoinRunErrors(t *testing.T) {
 	}
 }
 
+// writeDiffFullFixture creates a two-app cluster whose app-a ConfigMap data
+// is controlled by a postBuild.substituteFrom ConfigMap (env-cm). Only the
+// substituteFrom ConfigMap differs between base and head; the app-a source
+// file itself is identical on both sides. Returns (basePath, headPath).
+//
+// Tree layout (--path points at root directly):
+//
+//	root/
+//	  env-ks.yaml   ← Kustomization renders env-cm
+//	  app-a-ks.yaml ← Kustomization for app-a, substituteFrom env-cm
+//	  env/
+//	    kustomization.yaml
+//	    env-cm.yaml  ← ConfigMap with VALUE var (differs between base/head)
+//	  apps/app-a/
+//	    kustomization.yaml
+//	    cm.yaml      ← uses ${VALUE} — identical text on both sides
+func writeDiffFullFixture(t *testing.T, baseValue, headValue string) (basePath, headPath string) {
+	t.Helper()
+	for _, tc := range []struct {
+		dir string
+		val string
+	}{
+		{t.TempDir(), baseValue},
+		{t.TempDir(), headValue},
+	} {
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "env-ks.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: env
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./env
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+`)
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "app-a-ks.yaml"), `---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: app-a
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./apps/app-a
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: env-cm
+`)
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "env", "kustomization.yaml"),
+			"resources:\n- env-cm.yaml\n")
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "env", "env-cm.yaml"),
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: env-cm, namespace: flux-system}\ndata:\n  VALUE: "+tc.val+"\n")
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "apps", "app-a", "kustomization.yaml"),
+			"resources:\n- cm.yaml\n")
+		// Source file is byte-for-byte identical on both sides.
+		testutil.WriteFileAt(t, filepath.Join(tc.dir, "apps", "app-a", "cm.yaml"),
+			"apiVersion: v1\nkind: ConfigMap\nmetadata: {name: app-cm, namespace: default}\ndata:\n  key: ${VALUE}\n")
+		if basePath == "" {
+			basePath = tc.dir
+		} else {
+			headPath = tc.dir
+		}
+	}
+	return
+}
+
+// TestRun_DiffAll_FullFlag_SurfacesSubstituteFromChange verifies that
+// --full surfaces a change that changed-only mode misses: only the
+// substituteFrom ConfigMap (env-cm) differs between the two trees, so
+// changed-only mode re-renders env-cm but skips the app-a Kustomization
+// (its source file is identical). With --full both sides do a full render
+// and the substituted value in app-cm appears in the diff.
+func TestRun_DiffAll_FullFlag_SurfacesSubstituteFromChange(t *testing.T) {
+	origPath, currentPath := writeDiffFullFixture(t, "old-value", "new-value")
+
+	// Without --full: changed-only mode — the substituted ConfigMap (app-cm)
+	// is scoped out because its source file did not change.
+	stdoutPartial, _, codePartial := runCLI(t, "diff", "all",
+		"--path", currentPath, "--path-orig", origPath)
+	if codePartial != 0 {
+		t.Fatalf("diff all (changed-only) exited %d", codePartial)
+	}
+	if strings.Contains(stdoutPartial, "app-cm") {
+		t.Errorf("changed-only diff must NOT show app-cm (source unchanged): %s", stdoutPartial)
+	}
+
+	// With --full: both sides render the full cluster, so the substituted
+	// value in app-cm must appear in the diff.
+	stdoutFull, stderrFull, codeFull := runCLI(t, "diff", "all",
+		"--path", currentPath, "--path-orig", origPath, "--full")
+	if codeFull != 0 {
+		t.Fatalf("diff all --full exited %d: %s", codeFull, stderrFull)
+	}
+	if !strings.Contains(stdoutFull, "app-cm") {
+		t.Errorf("--full diff must show app-cm (substituted value changed):\n%s", stdoutFull)
+	}
+}
+
+// TestRun_DiffAll_FullFlag_IsAdvertised checks that --full appears in the
+// help text of `diff all`, `diff ks`, `diff hr`, and `diff images`.
+func TestRun_DiffAll_FullFlag_IsAdvertised(t *testing.T) {
+	for _, argv := range [][]string{
+		{"diff", "all", "--help"},
+		{"diff", "ks", "--help"},
+		{"diff", "hr", "--help"},
+		{"diff", "images", "--help"},
+	} {
+		stdout, _, code := runCLI(t, argv...)
+		if code != 0 {
+			t.Fatalf("%v --help exited %d", argv, code)
+		}
+		if !strings.Contains(stdout, "--full") {
+			t.Errorf("%v --help missing --full flag:\n%s", argv, stdout)
+		}
+	}
+}
+
 type dummyErr struct{ s string }
 
 func (d *dummyErr) Error() string { return d.s }
