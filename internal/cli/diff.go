@@ -36,6 +36,7 @@ func newDiffCmd() *cobra.Command {
 type diffFlags struct {
 	stripAttrs  []string
 	stripFields []string
+	fullRender  bool
 }
 
 func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
@@ -43,6 +44,9 @@ func bindDiffFlags(cmd *cobra.Command, d *diffFlags) {
 		"metadata annotation/label key to strip before diffing (repeatable; supplying any value replaces the default set)")
 	cmd.Flags().StringArrayVar(&d.stripFields, "strip-field", diff.DefaultStripFields,
 		"dotted spec field-path to delete before diffing, e.g. spec.restic.unlock (repeatable; supplying any value replaces the default set)")
+	cmd.Flags().BoolVar(&d.fullRender, "full", false,
+		"disable changed-only mode: render the entire cluster on both sides so that resources "+
+			"affected by postBuild.substituteFrom ConfigMap/Secret changes appear in the diff")
 }
 
 func diffCmd(use string, aliases []string, short, kind string) *cobra.Command {
@@ -75,21 +79,24 @@ func newDiffImagesCmd() *cobra.Command {
 	c := &commonFlags{}
 	h := &helmFlags{}
 	var includeRemoved bool
+	var fullRender bool
 	cmd := &cobra.Command{
 		Use:   "images",
 		Short: "Diff container images between current and baseline",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDiffImages(cmd, c, h, includeRemoved)
+			return runDiffImages(cmd, c, h, includeRemoved, fullRender)
 		},
 	}
 	bindCommon(cmd.Flags(), c, format.OutputName, format.OutputYAML, format.OutputJSON)
 	bindHelmFlags(cmd.Flags(), h)
 	cmd.Flags().BoolVar(&includeRemoved, "include-removed", false,
 		"also emit images present only in --path-orig (default: only newly added images)")
+	cmd.Flags().BoolVar(&fullRender, "full", false,
+		"disable changed-only mode: render the entire cluster on both sides")
 	return cmd
 }
 
-func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool) error {
+func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemoved bool, fullRender bool) error {
 	// diff images emits a flat list of image refs — name (one per line) is
 	// the default; json/yaml are the structured shapes. The -o flag rejects
 	// anything else at parse time.
@@ -98,7 +105,7 @@ func runDiffImages(cmd *cobra.Command, c *commonFlags, h *helmFlags, includeRemo
 		return err
 	}
 	defer stopProfile()
-	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h, fullRender)
 	if orig.O == nil || current.O == nil {
 		return runErr
 	}
@@ -157,7 +164,7 @@ func runDiff(cmd *cobra.Command, c *commonFlags, h *helmFlags, d *diffFlags, kin
 		return err
 	}
 	defer stopProfile()
-	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h)
+	orig, current, runErr := runDiffOrchestrators(cmdContext(cmd), c, h, d.fullRender)
 	if orig.O == nil || current.O == nil {
 		return runErr
 	}
@@ -197,8 +204,9 @@ type diffSide struct {
 // so each side renders changed-only against the other, one shared source
 // cache, concurrent) and maps its two sides into the diffSide pair the
 // diff/diff-images commands consume. base = --path-orig (left/old),
-// head = --path (right/new).
-func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (diffSide, diffSide, error) {
+// head = --path (right/new). When fullRender is true the changed-only
+// filter is disabled and both sides render the full cluster.
+func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags, fullRender bool) (diffSide, diffSide, error) {
 	// diff REQUIRES a baseline — when neither --path-orig nor --base
 	// is set, auto-detect via the merge-base ladder. Cleanup is
 	// deferred (not bound to ctx) so the tempdir survives SIGINT
@@ -211,11 +219,14 @@ func runDiffOrchestrators(ctx context.Context, c *commonFlags, h *helmFlags) (di
 	// Each side is a Tree: its scan entry point (Path) plus the source
 	// root (RepoRoot) that its spec.path values resolve against. The CLI
 	// resolves each root via the .git default (repoRootOf); RenderTrees
-	// reconciles each side changed-only against the other tree's root.
+	// reconciles each side changed-only against the other tree's root
+	// unless fullRender disables the filter.
+	cfg := buildOrchCfg(*c, *h)
+	cfg.DisableChangedOnly = fullRender
 	base, head, runErr := orchestrator.RenderTrees(ctx,
 		orchestrator.Tree{RepoRoot: c.baselineRoot(), Path: c.pathOrig, SelfURLs: c.pathOrigSelfURLs},
 		orchestrator.Tree{RepoRoot: repoRootOf(c.path), Path: c.path},
-		buildOrchCfg(*c, *h))
+		cfg)
 	orig := diffSide{O: base.Orchestrator, Res: base.Result, Err: base.Err}
 	current := diffSide{O: head.Orchestrator, Res: head.Result, Err: head.Err}
 	return orig, current, runErr

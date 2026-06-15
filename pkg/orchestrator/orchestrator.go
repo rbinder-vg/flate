@@ -65,6 +65,13 @@ type Config struct {
 	// changed-only mode: only resources whose source files differ
 	// (plus the sources they reference) get reconciled.
 	PathOrig string
+	// DisableChangedOnly, when true, suppresses the changed-only
+	// filter in RenderTrees even though PathOrig is set. Both sides
+	// render the full cluster, so resources whose source files are
+	// unchanged but whose rendered output differs (e.g. because a
+	// postBuild.substituteFrom ConfigMap changed) still appear in
+	// the diff.
+	DisableChangedOnly bool
 
 	// HelmOptions tunes templating (skip CRDs/secrets/tests, kube
 	// version, etc.).

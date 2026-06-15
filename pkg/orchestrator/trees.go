@@ -75,12 +75,21 @@ func RenderTrees(ctx context.Context, baseTree, headTree Tree, cfg Config) (base
 	baseCfg := cfg
 	baseCfg.RepoRoot = baseTree.RepoRoot
 	baseCfg.Path = cmp.Or(baseTree.Path, baseTree.RepoRoot)
-	baseCfg.PathOrig = headTree.RepoRoot
 	baseCfg.SelfURLs = baseTree.SelfURLs
 	headCfg := cfg
 	headCfg.RepoRoot = headTree.RepoRoot
 	headCfg.Path = cmp.Or(headTree.Path, headTree.RepoRoot)
-	headCfg.PathOrig = baseTree.RepoRoot
+	headCfg.SelfURLs = headTree.SelfURLs
+	if !cfg.DisableChangedOnly {
+		baseCfg.PathOrig = headTree.RepoRoot
+		headCfg.PathOrig = baseTree.RepoRoot
+	} else {
+		// Clear any PathOrig inherited from cfg (set by buildOrchCfg) so
+		// neither side activates the change filter. Both sides render the
+		// full cluster, and their outputs are diffed directly.
+		baseCfg.PathOrig = ""
+		headCfg.PathOrig = ""
+	}
 	headCfg.SelfURLs = headTree.SelfURLs
 
 	g, gctx := errgroup.WithContext(ctx)
