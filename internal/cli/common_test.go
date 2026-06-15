@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,6 +31,19 @@ func TestBindCommon_CacheDirFlag(t *testing.T) {
 	}
 	if f.cacheDir != "/tmp/explicit" {
 		t.Errorf("cacheDir = %q, want /tmp/explicit", f.cacheDir)
+	}
+}
+
+func TestBindCommon_AdditionalManifestsFlag(t *testing.T) {
+	var f commonFlags
+	fs := pflag.NewFlagSet("test", pflag.ContinueOnError)
+	bindCommon(fs, &f)
+	if err := fs.Parse([]string{"--additional-manifests", "/tmp/a.yaml", "--additional-manifests", "/tmp/b.yaml"}); err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	want := []string{"/tmp/a.yaml", "/tmp/b.yaml"}
+	if !slices.Equal(f.additionalManifests, want) {
+		t.Errorf("additionalManifests = %v, want %v", f.additionalManifests, want)
 	}
 }
 
@@ -72,6 +86,14 @@ func TestCacheDir_FlagAndEnvPopulateRoot(t *testing.T) {
 				t.Errorf("cache root %q is empty after build — --cache-dir / FLATE_CACHE_DIR did not flow through", cacheRoot)
 			}
 		})
+	}
+}
+
+func TestBuildOrchCfg_AdditionalManifestPaths(t *testing.T) {
+	cfg := buildOrchCfg(commonFlags{additionalManifests: []string{"/tmp/a.yaml", "/tmp/b.yaml"}}, helmFlags{})
+	want := []string{"/tmp/a.yaml", "/tmp/b.yaml"}
+	if !slices.Equal(cfg.AdditionalManifestPaths, want) {
+		t.Errorf("AdditionalManifestPaths = %v, want %v", cfg.AdditionalManifestPaths, want)
 	}
 }
 

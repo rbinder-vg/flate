@@ -4,7 +4,9 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"maps"
+	"os"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -92,6 +94,11 @@ type Config struct {
 
 	// RegistryConfig is the docker config.json used for OCI auth.
 	RegistryConfig string
+	// AdditionalManifestPaths are extra manifest files to inject into the store
+	// before reconcile. Only ConfigMap and Secret objects are accepted. Intended
+	// for cluster-created resources that live outside Flux, such as bootstrap
+	// override ConfigMaps or auth Secrets.
+	AdditionalManifestPaths []string
 
 	// CacheDir overrides the default on-disk cache root. The default
 	// follows os.UserCacheDir (XDG_CACHE_HOME on Linux, Library/Caches
@@ -548,12 +555,41 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 	o.selfProduce = res.SelfProduce
 	o.producers = res.Producers
 	o.existence = res.Existence
+	if err := loadAdditionalManifests(o.store, o.cfg.AdditionalManifestPaths, o.cfg.WipeSecrets); err != nil {
+		return err
+	}
 
 	o.failDependsOnCycles()
 	if err := o.buildChangeFilter(res.RepoRoot); err != nil {
 		return err
 	}
 	o.bootstrapped = true
+	return nil
+}
+
+func loadAdditionalManifests(st *store.Store, paths []string, wipeSecrets bool) error {
+	for _, path := range paths {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return fmt.Errorf("additional manifest %q: read: %w", path, err)
+		}
+		docs, err := manifest.SplitDocs(data)
+		if err != nil {
+			return fmt.Errorf("additional manifest %q: split docs: %w", path, err)
+		}
+		for i, doc := range docs {
+			obj, err := manifest.ParseDoc(doc, manifest.ParseDocOptions{WipeSecrets: wipeSecrets})
+			if err != nil {
+				return fmt.Errorf("additional manifest %q: doc %d: %w", path, i+1, err)
+			}
+			switch obj := obj.(type) {
+			case *manifest.ConfigMap, *manifest.Secret:
+				st.AddObject(obj)
+			default:
+				return fmt.Errorf("additional manifest %q: doc %d kind %q is not supported; only ConfigMap and Secret are allowed", path, i+1, obj.Named().Kind)
+			}
+		}
+	}
 	return nil
 }
 

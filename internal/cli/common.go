@@ -51,6 +51,7 @@ type commonFlags struct {
 	skipKinds           []string
 	output              string
 	registryConfig      string
+	additionalManifests []string
 	concurrency         int
 	// sourceRetry* tune the bounded retry applied uniformly to every source
 	// fetch on transient network errors. attempts is the total tries (first +
@@ -135,6 +136,9 @@ func bindCommon(fs *pflag.FlagSet, f *commonFlags, outputs ...format.Output) {
 		fs.VarP(&outputValue{target: &f.output, allowed: outputs}, "output", "o", outputUsage(outputs))
 	}
 	fs.StringVar(&f.registryConfig, "registry-config", "", "docker config.json for OCI authentication")
+	fs.StringSliceVar(&f.additionalManifests, "additional-manifests", nil,
+		"extra ConfigMap/Secret manifest files to inject before reconcile (repeatable; each file may be multi-doc) "+
+			"for resources created outside Flux, such as cluster bootstrap overrides")
 	fs.StringVar(&f.cacheDir, "cache-dir", "",
 		"on-disk cache root for source artifacts, helm charts, "+
 			"and persistent render output. Defaults to $XDG_CACHE_HOME/flate "+
@@ -418,10 +422,11 @@ func buildOrchCfg(c commonFlags, h helmFlags) orchestrator.Config {
 		// root, or the .git default of an explicit --path-orig. Replaces
 		// the core's old .git "widen" heuristic.
 		PathOrig:       c.baselineRoot(),
-		HelmOptions:    c.helmOptions(h),
-		WipeSecrets:    true,
-		RegistryConfig: c.registryConfig,
-		Concurrency:    c.concurrency,
+		HelmOptions:             c.helmOptions(h),
+		WipeSecrets:             true,
+		RegistryConfig:          c.registryConfig,
+		AdditionalManifestPaths: append([]string(nil), c.additionalManifests...),
+		Concurrency:             c.concurrency,
 		SourceRetry: source.RetryConfig{
 			Attempts: c.sourceRetryAttempts,
 			MinWait:  c.sourceRetryMinWait,
@@ -464,6 +469,11 @@ func runOrchestrator(ctx context.Context, c commonFlags, h helmFlags, pre ...fun
 			return nil, nil, err
 		}
 	}
+	for _, path := range c.additionalManifests {
+		if err := validateFileFlag("--additional-manifests", path); err != nil {
+			return nil, nil, err
+		}
+	}
 	// Cleanup is deferred (not bound to ctx) so the tempdir survives
 	// SIGINT until the orchestrator's read paths have actually
 	// unwound.
@@ -490,6 +500,20 @@ func validatePathFlag(flag, p string) error {
 	}
 	if !info.IsDir() {
 		return fmt.Errorf("%s %q is not a directory", flag, p)
+	}
+	return nil
+}
+
+func validateFileFlag(flag, p string) error {
+	info, err := os.Stat(p)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("%s %q does not exist", flag, p)
+		}
+		return fmt.Errorf("%s %q: %w", flag, p, err)
+	}
+	if info.IsDir() {
+		return fmt.Errorf("%s %q is not a file", flag, p)
 	}
 	return nil
 }

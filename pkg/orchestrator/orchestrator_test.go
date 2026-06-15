@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -618,6 +619,65 @@ spec:
 	}
 	if !strings.Contains(info.Message, "cluster-settings") {
 		t.Errorf("cluster-apps failure message = %q, want it to mention cluster-settings", info.Message)
+	}
+}
+
+func TestOrchestrator_AdditionalManifestsSatisfySubstituteFrom(t *testing.T) {
+	dir := t.TempDir()
+	testutil.WriteFile(t, dir, "kubernetes/flux/cluster-apps.yaml", `apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata: {name: cluster-apps, namespace: flux-system}
+spec:
+  path: ./kubernetes/apps
+  sourceRef: {kind: GitRepository, name: flux-system, namespace: flux-system}
+  postBuild:
+    substituteFrom:
+      - kind: ConfigMap
+        name: cluster-settings
+`)
+	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/kustomization.yaml",
+		"apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: flux-system\nresources:\n  - ./cm.yaml\n")
+	testutil.WriteFile(t, dir, "kubernetes/apps/flux-system/cm.yaml",
+		"apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: other\ndata:\n  k: v\n")
+	extraPath := filepath.Join(dir, "verify", "cluster-bootstrap.yaml")
+	testutil.WriteFileAt(t, extraPath, `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cluster-settings
+  namespace: flux-system
+data:
+  CLUSTER_NAME: home
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: bootstrap-secret
+  namespace: flux-system
+stringData:
+  TOKEN: secret
+`)
+
+	o, err := New(Config{Path: dir, WipeSecrets: true, Concurrency: 4, AdditionalManifestPaths: []string{extraPath}})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	if err := o.Bootstrap(context.Background()); err != nil {
+		t.Fatalf("Bootstrap: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := o.Run(ctx); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	ksID := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
+	if info, ok := o.Store().GetStatus(ksID); !ok || info.Status != store.StatusReady {
+		t.Fatalf("cluster-apps status = (%+v, %v), want Ready", info, ok)
+	}
+	if got := o.Store().GetObject(manifest.NamedResource{Kind: manifest.KindConfigMap, Namespace: "flux-system", Name: "cluster-settings"}); got == nil {
+		t.Fatalf("expected additional ConfigMap to be present in store")
+	}
+	if got := o.Store().GetObject(manifest.NamedResource{Kind: manifest.KindSecret, Namespace: "flux-system", Name: "bootstrap-secret"}); got == nil {
+		t.Fatalf("expected additional Secret to be present in store")
 	}
 }
 
