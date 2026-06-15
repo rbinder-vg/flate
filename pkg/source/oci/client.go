@@ -124,9 +124,14 @@ func (f *Fetcher) resolveRegistryConfig(repo *manifest.OCIRepository) (string, f
 
 // loadCredentials returns a credentials.Store backed by the given config
 // path. An empty configPath uses the docker default lookup.
+// NewStore (rather than NewFileStore) is used so that credential helpers
+// declared in the config file (credsStore / credHelpers) are invoked —
+// NewFileStore only reads static base64 auth entries and silently falls
+// back to anonymous when credentials are stored via a helper (e.g. the
+// dev-containers or az acr login helpers used with Azure Container Registry).
 func loadCredentials(configPath string) (credentials.Store, error) {
 	if configPath != "" {
-		s, err := credentials.NewFileStore(configPath)
+		s, err := credentials.NewStore(configPath, credentials.StoreOptions{AllowPlaintextPut: false})
 		if err != nil {
 			return nil, fmt.Errorf("load credentials %s: %w", configPath, err)
 		}

@@ -194,7 +194,7 @@ func Run(ctx context.Context, cfg Config) (*Result, error) {
 	// render emission. Promote it now so standalone CRs (loose HR
 	// at repo root, sources next to flux-system/kustomization.yaml,
 	// etc.) keep working in DiscoveryOnly mode.
-	d.promoteOrphans(prefixes)
+	d.promoteOrphans(prefixes, repoRoot)
 
 	producers := &manifest.ProducerIndex{}
 	return &Result{

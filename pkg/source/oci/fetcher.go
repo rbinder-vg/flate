@@ -47,7 +47,7 @@ type Fetcher struct {
 // fields, then hands off to fetch() — the workhorse in fetch.go that
 // owns slot lifecycle, oras Copy, layer extraction, and marker writes.
 func (f *Fetcher) Fetch(ctx context.Context, repo *manifest.OCIRepository) (*store.SourceArtifact, error) {
-	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider {
+	if repo.Provider != "" && repo.Provider != sourcev1.GenericOCIProvider && f.RegistryConfig == "" && repo.SecretRef == nil {
 		return nil, source.ErrUnsupportedProvider("OCIRepository",
 			repo.Namespace, repo.Name, repo.Provider, sourcev1.GenericOCIProvider,
 			"SecretRef or --registry-config credentials")

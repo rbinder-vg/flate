@@ -2,9 +2,12 @@ package discovery
 
 import (
 	"log/slog"
+	"path/filepath"
+	"strings"
 
 	"github.com/home-operations/flate/pkg/loader"
 )
+
 
 // promoteOrphans materializes Existence entries that no Kustomization
 // will ever render. An "orphan" here is a file-indexed object whose
@@ -27,9 +30,32 @@ import (
 // post-reconcile failure demotion there) and must agree on the
 // same "under a KS path" predicate so an object can't be classified
 // orphan by one and parented by the other.
-func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
+func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix, repoRoot string) {
 	if d.loader.Existence == nil {
 		return
+	}
+	// Compute a repo-root-relative version of the initial scan root so we
+	// can distinguish:
+	//   (a) files inside the scan root — potentially legitimate standalone
+	//       orphans (loose HRs, bootstrap CRs beside kustomization.yaml, …)
+	//   (b) files outside the scan root — loaded transitively via a
+	//       Kustomization spec.path's kustomize resource graph (e.g.
+	//       common/helm.yaml reached from azure-overlay/ → ../common/).
+	//       These will be properly rendered with namespace overlays and
+	//       postBuild substitutions by their enclosing Kustomization.
+	//       Promoting the raw (un-namespaced, un-substituted) copy as an
+	//       orphan produces a broken duplicate that races the rendered
+	//       version and fails with unresolved "${VAR}" references.
+	// sourceFiles stores paths relative to repoRoot (slash-normalised), so
+	// we derive scanPrefix as a relative-to-repoRoot slash path for a
+	// consistent comparison.
+	var scanPrefix string
+	if d.cfg.Path != "" && repoRoot != "" {
+		if abs, err := ResolveScanPath(d.cfg.Path); err == nil {
+			if rel, err := filepath.Rel(repoRoot, abs); err == nil {
+				scanPrefix = filepath.ToSlash(filepath.Clean(rel))
+			}
+		}
 	}
 	// prefixes is the same KS spec.path list discovery.Run computed for
 	// the parent-index passes (identical repoRoot + shared component
@@ -42,6 +68,22 @@ func (d *discoverer) promoteOrphans(prefixes []loader.KSPathPrefix) {
 		if file, ok := d.sourceFiles[id]; ok {
 			if _, covered := loader.LongestParent(prefixes, file, id); covered {
 				continue
+			}
+			// Skip files that live outside the initial scan root: they were
+			// loaded because a KS spec.path's kustomize overlay graph
+			// references them (e.g. via resources: ../common). The proper,
+			// fully-rendered version will be emitted by the Kustomization
+			// controller — promoting the raw file here creates a stale,
+			// un-substituted duplicate.
+			// scanPrefix == "." means the scan root IS the repo root, so
+			// every file is within scope — skip the filter.
+			if scanPrefix != "" && scanPrefix != "." {
+				slashFile := filepath.ToSlash(filepath.Clean(file))
+				if slashFile != scanPrefix && !strings.HasPrefix(slashFile, scanPrefix+"/") {
+					slog.Debug("discovery: skipping orphan promotion for out-of-scan-root file",
+						"id", id.String(), "file", file, "scan_prefix", scanPrefix)
+					continue
+				}
 			}
 		}
 		if !d.loader.Existence.Promote(d.cfg.Store, id, d.cfg.WipeSecrets) {
