@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/home-operations/flate/pkg/change"
@@ -576,7 +578,11 @@ func (o *Orchestrator) Bootstrap(ctx context.Context) error {
 
 func loadAdditionalManifests(st *store.Store, paths []string, wipeSecrets bool) error {
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
+		dir, name := filepath.Split(path)
+		if dir == "" {
+			dir = "."
+		}
+		data, err := fs.ReadFile(os.DirFS(dir), name)
 		if err != nil {
 			return fmt.Errorf("additional manifest %q: read: %w", path, err)
 		}

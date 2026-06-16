@@ -5,6 +5,8 @@ import (
 
 	sourcev1 "github.com/fluxcd/source-controller/api/v1"
 
+	"slices"
+
 	"github.com/home-operations/flate/pkg/loader"
 	"github.com/home-operations/flate/pkg/manifest"
 	"github.com/home-operations/flate/pkg/store"
@@ -273,11 +275,8 @@ func knownSourceIDs(s *store.Store, existence *loader.ExistenceIndex, kinds ...s
 		}
 	}
 	for id := range existence.All() {
-		for _, kind := range kinds {
-			if id.Kind == kind {
-				out[id] = struct{}{}
-				break
-			}
+		if slices.Contains(kinds, id.Kind) {
+			out[id] = struct{}{}
 		}
 	}
 	return out
