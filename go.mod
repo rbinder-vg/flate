@@ -7,19 +7,19 @@ require (
 	charm.land/bubbletea/v2 v2.0.7
 	charm.land/lipgloss/v2 v2.0.4
 	github.com/Masterminds/semver/v3 v3.5.0
-	github.com/alecthomas/chroma/v2 v2.26.1
+	github.com/alecthomas/chroma/v2 v2.27.0
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/controlplaneio-fluxcd/flux-operator v0.52.0
 	github.com/distribution/reference v0.6.0
-	github.com/fluxcd/helm-controller/api v1.5.5
-	github.com/fluxcd/kustomize-controller/api v1.8.5
+	github.com/fluxcd/helm-controller/api v1.6.0
+	github.com/fluxcd/kustomize-controller/api v1.9.0
 	github.com/fluxcd/pkg/apis/kustomize v1.19.0
 	github.com/fluxcd/pkg/apis/meta v1.30.0
 	github.com/fluxcd/pkg/envsubst v1.7.0
-	github.com/fluxcd/pkg/kustomize v1.34.0
+	github.com/fluxcd/pkg/kustomize v1.35.0
 	github.com/fluxcd/pkg/sourceignore v0.18.0
-	github.com/fluxcd/source-controller/api v1.8.5
+	github.com/fluxcd/source-controller/api v1.9.0
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/go-task/slim-sprig/v3 v3.0.0
 	github.com/gofrs/flock v0.13.0
@@ -39,7 +39,7 @@ require (
 	go.yaml.in/yaml/v4 v4.0.0-rc.5
 	golang.org/x/crypto v0.53.0
 	golang.org/x/sync v0.21.0
-	helm.sh/helm/v4 v4.2.1
+	helm.sh/helm/v4 v4.2.2
 	k8s.io/apiextensions-apiserver v0.36.2
 	k8s.io/apimachinery v0.36.2
 	oras.land/oras-go/v2 v2.6.1
@@ -74,7 +74,7 @@ require (
 	github.com/cloudflare/circl v1.6.3 // indirect
 	github.com/cyphar/filepath-securejoin v0.6.1 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/dlclark/regexp2/v2 v2.1.1 // indirect
+	github.com/dlclark/regexp2/v2 v2.2.1 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dylibso/observe-sdk/go v0.0.0-20240828172851-9145d8ad07e1 // indirect
 	github.com/emicklei/go-restful/v3 v3.13.0 // indirect
@@ -205,7 +205,7 @@ require (
 	k8s.io/client-go v0.36.2 // indirect
 	k8s.io/component-base v0.36.2 // indirect
 	k8s.io/klog/v2 v2.140.0 // indirect
-	k8s.io/kube-openapi v0.0.0-20260520065146-aa012df4f4af // indirect
+	k8s.io/kube-openapi v0.0.0-20260603220949-865597e52e25 // indirect
 	k8s.io/kubectl v0.36.1 // indirect
 	k8s.io/utils v0.0.0-20260507154919-ff6756f316d2 // indirect
 	sigs.k8s.io/controller-runtime v0.24.1 // indirect
