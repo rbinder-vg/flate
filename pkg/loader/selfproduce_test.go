@@ -121,7 +121,7 @@ func TestBuildSelfProduceIndex_EmissionParentByFile(t *testing.T) {
 	s.AddObject(&manifest.Kustomization{Name: "cluster-apps2", Namespace: "flux-system",
 		KustomizationSpec: kustomizev1.KustomizationSpec{Path: "./apps/test2"}})
 
-	idx := BuildSelfProduceIndex(s, dir, nil, true)
+	idx := BuildSelfProduceIndex(s, dir, nil, true, nil)
 
 	clusterApps := manifest.NamedResource{Kind: manifest.KindKustomization, Namespace: "flux-system", Name: "cluster-apps"}
 	if got, ok := idx.EmissionParentByFile("apps/base/app-a/ks.yaml"); !ok || got != clusterApps {
